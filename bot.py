@@ -444,4 +444,201 @@ class DashboardView(discord.ui.View):
 
 # --- Bot Initialization ---
 
-Now the content truncated due to size. I'll stop here.
+class ShiftBot(commands.Bot):
+    def __init__(self):
+        intents = discord.Intents.default()
+        intents.message_content = True
+        super().__init__(command_prefix="!", intents=intents)
+
+    async def setup_hook(self):
+        self.add_view(ShiftPanelView())
+        self.add_view(DashboardView())
+
+        # Verify Sheet parameters
+        if not config.GOOGLE_SHEET_ID or config.GOOGLE_SHEET_ID == "your_google_sheet_id_here":
+            print("WARNING: GOOGLE_SHEET_ID is not set! Google Sheets database operations will fail.")
+        else:
+            try:
+                database.init_db(config.GOOGLE_SHEET_ID, config.CREDENTIALS_JSON_PATH)
+                print(f"Google Sheet database initialized.")
+            except Exception as e:
+                print(f"ERROR: Failed to initialize Google Sheets database: {e}")
+
+        # Sync commands
+        if config.GUILD_ID:
+            guild = discord.Object(id=config.GUILD_ID)
+            self.tree.copy_global_to(guild=guild)
+            await self.tree.sync(guild=guild)
+            print(f"Synced slash commands to server: {config.GUILD_ID}")
+        else:
+            await self.tree.sync()
+            print("Synced slash commands globally")
+
+    async def on_ready(self):
+        print(f"Bot logged in as {self.user.name} ({self.user.id})")
+        print("------")
+        if config.GOOGLE_SHEET_ID and config.GOOGLE_SHEET_ID != "your_google_sheet_id_here":
+            for guild in self.guilds:
+                try:
+                    await update_all_boards(guild)
+                except Exception as e:
+                    print(f"WARNING: Could not update boards on startup (likely credentials.json is missing or sheet ID is invalid): {e}")
+
+bot = ShiftBot()
+
+
+# --- Slash Commands ---
+
+@bot.tree.command(name="setup", description="ติดตั้งปุ่มกดเข้าเวร-ออกเวร และบอร์ดรายชื่อคนเข้าเวร")
+@app_commands.checks.has_permissions(administrator=True)
+async def setup_panel(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+
+    panel_embed = discord.Embed(
+        title="🩺 ระบบลงเวลากลุ่มแพทย์ปฏิบัติงาน (Shift Logs)",
+        description="กรุณากดปุ่มด้านล่างเพื่อลงเวลาทำงานของท่าน\n\n"
+                    "🟢 **เข้าเวร (Check In)**: บันทึกเวลาเริ่มต้นทำงานในเวร\n"
+                    "🔴 **ออกเวร (Check Out)**: บันทึกเวลาเลิกงานและคำนวณชั่วโมง\n\n"
+                    "*ประวัติและชั่วโมงการทำงานทั้งหมดจะถูกจัดเก็บลงฐานข้อมูลเพื่อสรุปสถิติรายเดือน*",
+        color=discord.Color.blue()
+    )
+    panel_embed.set_footer(text="ระบบบันทึกเวลาเวรแพทย์อัตโนมัติ")
+    await interaction.channel.send(embed=panel_embed, view=ShiftPanelView())
+
+    active_embed = discord.Embed(
+        title="🏥 รายชื่อแพทย์ที่กำลังปฏิบัติงานอยู่ในเวร (Active Doctors)",
+        description="❌ ขณะนี้ไม่มีแพทย์ปฏิบัติงานในเวร\n\n*(แพทย์สามารถเข้าเวรได้โดยกดปุ่ม \"เข้าเวร\")*",
+        color=discord.Color.light_grey()
+    )
+    active_embed.set_footer(text="อัปเดตอัตโนมัติเรียลไทม์")
+    status_message = await interaction.channel.send(embed=active_embed)
+
+    database.set_setting("active_status_channel_id", str(interaction.channel_id), config.GOOGLE_SHEET_ID, config.CREDENTIALS_JSON_PATH)
+    database.set_setting("active_status_message_id", str(status_message.id), config.GOOGLE_SHEET_ID, config.CREDENTIALS_JSON_PATH)
+
+    await update_active_duty_board(interaction.guild)
+
+    await interaction.followup.send(
+        "✅ **ติดตั้งเสร็จสิ้น!**\n"
+        "• สร้างแผงปุ่มกด และสร้างบอร์ดแสดงรายชื่อคนเข้าเวรเรียบร้อยแล้ว\n"
+        "• บอร์ดจะทำการอัปเดตรายชื่ออัตโนมัติเมื่อแพทย์ทำการเข้า-ออกเวร",
+        ephemeral=True
+    )
+
+
+@setup_panel.error
+async def setup_panel_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.MissingPermissions):
+        await interaction.response.send_message("⚠️ ขออภัย คุณจำเป็นต้องมีสิทธิ์เป็น `Administrator` เพื่อรันคำสั่งนี้", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"❌ เกิดข้อผิดพลาด: {str(error)}", ephemeral=True)
+
+
+@bot.tree.command(name="setup-dashboard", description="ติดตั้งแดชบอร์ดสรุปสถิติเวรสะสมแบบกรองได้ (สำหรับผู้ดูแล)")
+@app_commands.checks.has_permissions(administrator=True)
+async def setup_dashboard(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+
+    embed = build_dashboard_embed("all")
+    dashboard_message = await interaction.channel.send(embed=embed, view=DashboardView())
+
+    database.set_setting("dashboard_channel_id", str(interaction.channel_id), config.GOOGLE_SHEET_ID, config.CREDENTIALS_JSON_PATH)
+    database.set_setting("dashboard_message_id", str(dashboard_message.id), config.GOOGLE_SHEET_ID, config.CREDENTIALS_JSON_PATH)
+
+    await interaction.followup.send(
+        "✅ **ติดตั้งแดชบอร์ดสรุปสถิติสำเร็จ!**\n"
+        "• แดชบอร์ดนี้สามารถกรองเวลาดูย้อนหลังได้โดยตรงทางแชท\n"
+        "• ปุ่มดาวน์โหลดจะดึงไฟล์ Excel (CSV) ตามตัวเลือกที่เลือก",
+        ephemeral=True
+    )
+
+
+@setup_dashboard.error
+async def setup_dashboard_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.MissingPermissions):
+        await interaction.response.send_message("⚠️ ขออภัย คุณจำเป็นต้องมีสิทธิ์เป็น `Administrator` เพื่อรันคำสั่งนี้", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"❌ เกิดข้อผิดพลาด: {str(error)}", ephemeral=True)
+
+
+@bot.tree.command(name="status", description="ตรวจสอบรายชื่อแพทย์ที่กำลังปฏิบัติงานอยู่ในเวรขณะนี้")
+async def view_status(interaction: discord.Interaction):
+    active_shifts = database.get_currently_on_duty(config.GOOGLE_SHEET_ID, config.CREDENTIALS_JSON_PATH)
+
+    if not active_shifts:
+        embed = discord.Embed(
+            title="🏥 แพทย์ที่กำลังอยู่ในเวร",
+            description="❌ ไม่มีแพทย์กำลังปฏิบัติหน้าที่อยู่ในเวรขณะนี้",
+            color=discord.Color.light_grey()
+        )
+        await interaction.response.send_message(embed=embed)
+        return
+
+    embed = discord.Embed(
+        title="🏥 แพทย์ที่กำลังปฏิบัติงานอยู่ในเวรขณะนี้",
+        color=discord.Color.green(),
+        timestamp=datetime.datetime.now(datetime.timezone.utc)
+    )
+    
+    list_content = ""
+    now_local = datetime.datetime.now(LOCAL_TZ)
+    for idx, shift in enumerate(active_shifts, 1):
+        user_id = shift.get('user_id')
+        username = shift.get('username')
+        check_in_str = shift.get('check_in') or ""
+        
+        check_in_dt = parse_sheet_time_to_local(check_in_str)
+        if check_in_dt is None:
+            time_elapsed = "ไม่ทราบระยะเวลา"
+        else:
+            diff = now_local - check_in_dt
+            if diff.total_seconds() < 0:
+                diff = datetime.timedelta(0)
+            hours, remainder = divmod(int(diff.total_seconds()), 3600)
+            minutes, seconds = divmod(remainder, 60)
+            time_elapsed = f"{hours} ชม. {minutes} นาที {seconds} วินาที"
+            
+        list_content += f"{idx}. <@{user_id}> (ชื่อในระบบ: {username})\n   ⏱️ เข้าเวรเมื่อ: `{check_in_str}` (ทำมาแล้ว: `{time_elapsed}`)\n\n"
+        
+    embed.description = list_content
+    await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="my-shifts", description="ดูประวัติการเข้าเวรล่าสุดและชั่วโมงทำงานสะสมของคุณ")
+async def my_shifts(interaction: discord.Interaction):
+    user_id = str(interaction.user.id)
+    history = database.get_user_history(user_id, 5, config.GOOGLE_SHEET_ID, config.CREDENTIALS_JSON_PATH)
+    total_hours = database.get_user_total_hours(user_id, config.GOOGLE_SHEET_ID, config.CREDENTIALS_JSON_PATH)
+    
+    embed = discord.Embed(
+        title=f"📊 สรุปเวลางานของคุณ: {interaction.user.display_name}",
+        color=discord.Color.teal()
+    )
+    embed.add_field(name="⏱️ ชั่วโมงสะสมรวม (เฉพาะที่ออกเวรแล้ว)", value=f"`{total_hours}` ชั่วโมง", inline=False)
+    
+    if not history:
+        embed.description = "📝 ไม่พบประวัติการเข้าเวรของคุณในระบบ"
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+
+    history_text = "**ประวัติ 5 เวรล่าสุด:**\n"
+    for shift in history:
+        check_in = shift.get('check_in')
+        check_out = shift.get('check_out') if shift.get('check_out') else "*กำลังเข้าเวรอยู่*"
+        duration = f"{shift.get('duration_hours')} ชั่วโมง" if shift.get('duration_hours') is not None else "-"
+        
+        history_text += f"• **เข้า:** `{check_in}` | **ออก:** `{check_out}` | **รวม:** `{duration}`\n"
+        
+    embed.description = history_text
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+if __name__ == "__main__":
+    if not config.DISCORD_TOKEN or config.DISCORD_TOKEN == "your_discord_bot_token_here":
+        print("ERROR: Please set your DISCORD_TOKEN in the .env file!")
+    else:
+        # Start keep-alive web server to satisfy Render's port binding check
+        keep_alive()
+        
+        # Start Discord Bot
+        bot.run(config.DISCORD_TOKEN)
