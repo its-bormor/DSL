@@ -239,6 +239,7 @@ class ShiftPanelView(discord.ui.View):
     async def check_in_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         # Skip stale interactions that have already expired (>2.5 seconds old)
         if is_interaction_expired(interaction):
+            await interaction.response.send_message("⚠️ การโต้ตอบหมดอายุ กรุณากดปุ่มใหม่", ephemeral=True)
             return
         # Defer immediately to prevent 3-second timeout due to Google Sheets API latency
         await interaction.response.defer(ephemeral=True)
@@ -251,30 +252,35 @@ class ShiftPanelView(discord.ui.View):
 
             # Respond to user immediately
             await interaction.followup.send(
-                f"🟢 **เข้าเวรสำเร็จ!**\nลงชื่อเข้าเวรเมื่อ: `{check_in_time}`\nขอให้มีความสุขกับการทำงานในวันนี้ครับ! 💪",
+                f"🟢 **เข้าเวรสำเร็จ!**\nลงชื่อเข้าเวรเมื่อ: `{check_in_time}`\nขอให้มีความสุขกับวันนี้นะคับ! 🏥",
                 ephemeral=True
             )
 
             # Fire board update and log notification in the background (non-blocking)
             async def _background():
+                await asyncio.sleep(0.5)  # Small delay to avoid rate limiting
                 if interaction.guild:
                     await update_all_boards(interaction.guild)
                 if config.LOG_CHANNEL_ID:
-                    log_channel = interaction.guild.get_channel(config.LOG_CHANNEL_ID)
-                    if log_channel:
-                        embed = discord.Embed(
-                            title="🏥 แพทย์เข้าเวร",
-                            description=f"แพทย์: {interaction.user.mention}\nเวลา: `{check_in_time}`",
-                            color=discord.Color.green(),
-                            timestamp=datetime.datetime.now(datetime.timezone.utc)
-                        )
-                        embed.set_thumbnail(url=interaction.user.display_avatar.url)
-                        await log_channel.send(embed=embed)
+                    try:
+                        log_channel = interaction.guild.get_channel(config.LOG_CHANNEL_ID)
+                        if log_channel:
+                            embed = discord.Embed(
+                                title="🏥 แพทย์เข้าเวร",
+                                description=f"แพทย์: {interaction.user.mention}\nเวลา: `{check_in_time}`",
+                                color=discord.Color.green(),
+                                timestamp=datetime.datetime.now(datetime.timezone.utc)
+                            )
+                            embed.set_thumbnail(url=interaction.user.display_avatar.url)
+                            await log_channel.send(embed=embed)
+                    except Exception as e:
+                        print(f"Error sending log message: {e}")
             asyncio.create_task(_background())
 
         except ValueError as e:
             await interaction.followup.send(f"⚠️ **แจ้งเตือน:** {str(e)}", ephemeral=True)
         except Exception as e:
+            print(f"Check-in error: {e}")
             await interaction.followup.send(f"❌ **เกิดข้อผิดพลาด:** {str(e)}", ephemeral=True)
 
     @discord.ui.button(
@@ -286,6 +292,7 @@ class ShiftPanelView(discord.ui.View):
     async def check_out_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         # Skip stale interactions that have already expired (>2.5 seconds old)
         if is_interaction_expired(interaction):
+            await interaction.response.send_message("⚠️ การโต้ตอบหมดอายุ กรุณากดปุ่มใหม่", ephemeral=True)
             return
         # Defer immediately to prevent 3-second timeout due to Google Sheets API latency
         await interaction.response.defer(ephemeral=True)
@@ -310,27 +317,32 @@ class ShiftPanelView(discord.ui.View):
 
             # Fire board update and log notification in the background (non-blocking)
             async def _background():
+                await asyncio.sleep(0.5)  # Small delay to avoid rate limiting
                 if interaction.guild:
                     await update_all_boards(interaction.guild)
                 if config.LOG_CHANNEL_ID:
-                    log_channel = interaction.guild.get_channel(config.LOG_CHANNEL_ID)
-                    if log_channel:
-                        embed = discord.Embed(
-                            title="🚪 แพทย์ออกเวร",
-                            description=f"แพทย์: {interaction.user.mention}\n"
-                                        f"เวลาเข้า: `{check_in_time}`\n"
-                                        f"เวลาออก: `{check_out_time}`\n"
-                                        f"รวมเวลา: `{duration}` ชั่วโมง",
-                            color=discord.Color.red(),
-                            timestamp=datetime.datetime.now(datetime.timezone.utc)
-                        )
-                        embed.set_thumbnail(url=interaction.user.display_avatar.url)
-                        await log_channel.send(embed=embed)
+                    try:
+                        log_channel = interaction.guild.get_channel(config.LOG_CHANNEL_ID)
+                        if log_channel:
+                            embed = discord.Embed(
+                                title="🚪 แพทย์ออกเวร",
+                                description=f"แพทย์: {interaction.user.mention}\n"
+                                            f"เวลาเข้า: `{check_in_time}`\n"
+                                            f"เวลาออก: `{check_out_time}`\n"
+                                            f"รวมเวลา: `{duration}` ชั่วโมง",
+                                color=discord.Color.red(),
+                                timestamp=datetime.datetime.now(datetime.timezone.utc)
+                            )
+                            embed.set_thumbnail(url=interaction.user.display_avatar.url)
+                            await log_channel.send(embed=embed)
+                    except Exception as e:
+                        print(f"Error sending log message: {e}")
             asyncio.create_task(_background())
 
         except ValueError as e:
             await interaction.followup.send(f"⚠️ **แจ้งเตือน:** {str(e)}", ephemeral=True)
         except Exception as e:
+            print(f"Check-out error: {e}")
             await interaction.followup.send(f"❌ **เกิดข้อผิดพลาด:** {str(e)}", ephemeral=True)
 
 
@@ -408,7 +420,8 @@ class DashboardView(discord.ui.View):
     )
     async def csv_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("⚠️ ขออภัย เฉพาะผู้ดูแลระบบ (Administrator) เท่านั้นที่ดาวน์โหลดได้", ephemeral=True)
+            await interaction.response.send_message("⚠️ ขออภัย เฉพาะผู้ดูแลระบบ (Administrator) เท่านั้นที่ดาวน์โหลดได้",
+                ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True)
@@ -433,7 +446,7 @@ class DashboardView(discord.ui.View):
 
             file_to_send = discord.File(temp_path, filename=f"shifts_{selected_value}_{datetime.date.today()}.csv")
             await interaction.followup.send(
-                content=f"📊 **รายงานประวัติเข้าเวรแพทย์ (ตัวกรอง: {th_label})** ถูกจัดส่งเรียบร้อยแล้ว",
+                content=f"📊 **รายงานประวัติเข้า��วรแพทย์ (ตัวกรอง: {th_label})** ถูกจัดส่งเรียบร้อยแล้ว!",
                 file=file_to_send,
                 ephemeral=True
             )
@@ -499,7 +512,7 @@ async def setup_panel(interaction: discord.Interaction):
         description="กรุณากดปุ่มด้านล่างเพื่อลงเวลาทำงานของท่าน\n\n"
                     "🟢 **เข้าเวร (Check In)**: บันทึกเวลาเริ่มต้นทำงานในเวร\n"
                     "🔴 **ออกเวร (Check Out)**: บันทึกเวลาเลิกงานและคำนวณชั่วโมง\n\n"
-                    "*ประวัติและชั่วโมงการทำงานทั้งหมดจะถูกจัดเก็บลงฐานข้อมูลเพื่อสรุปสถิติรายเดือน*",
+                    "*ประวัติและชั่วโมงการทำงานทั้งหมดจะถูกจัดเก็บลงฐานข้อมูลอัตโนมัติ*",
         color=discord.Color.blue()
     )
     panel_embed.set_footer(text="ระบบบันทึกเวลาเวรแพทย์อัตโนมัติ")
@@ -529,12 +542,13 @@ async def setup_panel(interaction: discord.Interaction):
 @setup_panel.error
 async def setup_panel_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.MissingPermissions):
-        await interaction.response.send_message("⚠️ ขออภัย คุณจำเป็นต้องมีสิทธิ์เป็น `Administrator` เพื่อรันคำสั่งนี้", ephemeral=True)
+        await interaction.response.send_message("⚠️ ขออภัย คุณจำเป็นต้องมีสิทธิ์เป็น `Administrator` เพื่อรันคำสั่งนี้",
+            ephemeral=True)
     else:
         await interaction.response.send_message(f"❌ เกิดข้อผิดพลาด: {str(error)}", ephemeral=True)
 
 
-@bot.tree.command(name="setup-dashboard", description="ติดตั้งแดชบอร์ดสรุปสถิติเวรสะสมแบบกรองได้ (สำหรับผู้ดูแล)")
+@bot.tree.command(name="setup-dashboard", description="ติดตั้งแดชบอร์ดสรุปสถิติเวรสะสมแบบกรองได้ (สำหรับ Admin)")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_dashboard(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
@@ -556,7 +570,8 @@ async def setup_dashboard(interaction: discord.Interaction):
 @setup_dashboard.error
 async def setup_dashboard_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.MissingPermissions):
-        await interaction.response.send_message("⚠️ ขออภัย คุณจำเป็นต้องมีสิทธิ์เป็น `Administrator` เพื่อรันคำสั่งนี้", ephemeral=True)
+        await interaction.response.send_message("⚠️ ขออภัย คุณจำเป็นต้องมีสิทธิ์เป็น `Administrator` เพื่อรันคำสั่งนี้",
+            ephemeral=True)
     else:
         await interaction.response.send_message(f"❌ เกิดข้อผิดพลาด: {str(error)}", ephemeral=True)
 
