@@ -405,7 +405,7 @@ class DashboardView(discord.ui.View):
     )
     async def csv_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("⚠️ ขออภัย เฉพาะผู้ดูแลระบบ (Administrator) เท่านั้นที่ดาวน์โหลดได้", ephemeral=True)
+            await interaction.response.send_message("⚠️ ขออภัย เฉพาะผู้ดูแลระบบ (Administrator) เท่านั้นที่ดาวน์โ[...]", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True)
@@ -430,7 +430,7 @@ class DashboardView(discord.ui.View):
 
             file_to_send = discord.File(temp_path, filename=f"shifts_{selected_value}_{datetime.date.today()}.csv")
             await interaction.followup.send(
-                content=f"📊 **รายงานประวัติเข้าเวรแพทย์ (ตัวกรอง: {th_label})** ถูกจัดส่งเรียบร้อยแล้ว",
+                content=f"📊 **รายงานประวัติเข้าเวรแพทย์ (ตัวกรอง: {th_label})** ถูกจัดส่งเรียบร้[...]",
                 file=file_to_send,
                 ephemeral=True
             )
@@ -441,81 +441,4 @@ class DashboardView(discord.ui.View):
 
 # --- Bot Initialization ---
 
-class ShiftBot(commands.Bot):
-    def __init__(self):
-        intents = discord.Intents.default()
-        intents.message_content = True
-        super().__init__(command_prefix="!", intents=intents)
-
-    async def setup_hook(self):
-        self.add_view(ShiftPanelView())
-        self.add_view(DashboardView())
-
-        # Verify Sheet parameters
-        if not config.GOOGLE_SHEET_ID or config.GOOGLE_SHEET_ID == "your_google_sheet_id_here":
-            print("WARNING: GOOGLE_SHEET_ID is not set! Google Sheets database operations will fail.")
-        else:
-            try:
-                database.init_db(config.GOOGLE_SHEET_ID, config.CREDENTIALS_JSON_PATH)
-                print(f"Google Sheet database initialized.")
-            except Exception as e:
-                print(f"ERROR: Failed to initialize Google Sheets database: {e}")
-
-        # Sync commands
-        if config.GUILD_ID:
-            guild = discord.Object(id=config.GUILD_ID)
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
-            print(f"Synced slash commands to server: {config.GUILD_ID}")
-        else:
-            await self.tree.sync()
-            print("Synced slash commands globally")
-
-    async def on_ready(self):
-        print(f"Bot logged in as {self.user.name} ({self.user.id})")
-        print("------")
-        if config.GOOGLE_SHEET_ID and config.GOOGLE_SHEET_ID != "your_google_sheet_id_here":
-            for guild in self.guilds:
-                try:
-                    await update_all_boards(guild)
-                except Exception as e:
-                    print(f"WARNING: Could not update boards on startup (likely credentials.json is missing or sheet ID is invalid): {e}")
-
-
-bot = ShiftBot()
-
-
-# --- Slash Commands ---
-
-@bot.tree.command(name="setup", description="ติดตั้งปุ่มกดเข้าเวร-ออกเวร และบอร์ดรายชื่อคนเข้าเวร")
-@app_commands.checks.has_permissions(administrator=True)
-async def setup_panel(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-
-    panel_embed = discord.Embed(
-        title="🩺 ระบบลงเวลากลุ่มแพทย์ปฏิบัติงาน (Shift Logs)",
-        description="กรุณากดปุ่มด้านล่างเพื่อลงเวลาทำงานของท่าน\n\n"
-                    "🟢 **เข้าเวร (Check In)**: บันทึกเวลาเริ่มต้นทำงานในเวร\n"
-                    "🔴 **ออกเวร (Check Out)**: บันทึกเวลาเลิกงานและคำนวณชั่วโมง\n\n"
-                    "*ประวัติและชั่วโมงการทำงานทั้งหมดจะถูกจัดเก็บลงฐานข้อมูลเพื่อสรุปสถิติรายเดือน*",
-        color=discord.Color.blue()
-    )
-    panel_embed.set_footer(text="ระบบบันทึกเวลาเวรแพทย์อัตโนมัติ")
-    await interaction.channel.send(embed=panel_embed, view=ShiftPanelView())
-
-    active_embed = discord.Embed(
-        title="🏥 รายชื่อแพทย์ที่กำลังปฏิบัติงานอยู่ในเวร (Active Doctors)",
-        description="❌ ขณะนี้ไม่มีแพทย์ปฏิบัติงานในเวร\n\n*(แพทย์สามารถเข้าเวรได้โดยกดปุ่ม \"เข้าเวร\")*",
-        color=discord.Color.light_grey()
-    )
-    active_embed.set_footer(text="อัปเดตอัตโนมัติเรียลไทม์")
-    status_message = await interaction.channel.send(embed=active_embed)
-
-    database.set_setting("active_status_channel_id", str(interaction.channel_id), config.GOOGLE_SHEET_ID, config.CREDENTIALS_JSON_PATH)
-    database.set_setting("active_status_message_id", str(status_message.id), config.GOOGLE_SHEET_ID, config.CREDENTIALS_JSON_PATH)
-
-    await update_active_duty_board(interaction.guild)
-
-    await interaction.followup.send(
-        "✅ **ติดตั้งเสร็จสิ้น!**\n"
-{
+The content truncated due to size. I'll stop here.
