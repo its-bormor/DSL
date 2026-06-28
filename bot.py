@@ -3,15 +3,11 @@ from discord import app_commands
 from discord.ext import commands
 import os
 import datetime
-from zoneinfo import ZoneInfo
 import tempfile
 import config
 import database
 from flask import Flask
 import threading
-
-# Local timezone for user-visible times
-LOCAL_TZ = ZoneInfo("Asia/Bangkok")
 
 # --- Keep-Alive Web Server for Render Compatibility ---
 web_app = Flask(__name__)
@@ -58,11 +54,10 @@ async def update_active_duty_board(guild: discord.Guild) -> None:
             
         active_shifts = database.get_currently_on_duty(config.GOOGLE_SHEET_ID, config.CREDENTIALS_JSON_PATH)
         
-        # Use UTC for embed.timestamp (Discord expects an aware datetime)
         embed = discord.Embed(
             title="🏥 รายชื่อแพทย์ที่กำลังปฏิบัติงานอยู่ในเวร (Active Doctors)",
             color=discord.Color.green(),
-            timestamp=datetime.datetime.now(datetime.timezone.utc)
+            timestamp=datetime.datetime.now()
         )
         
         if not active_shifts:
@@ -75,11 +70,8 @@ async def update_active_duty_board(guild: discord.Guild) -> None:
                 check_in_str = shift['check_in']
                 
                 try:
-                    # Stored times are in LOCAL_TZ (Asia/Bangkok) as naive strings.
-                    # Parse and make them timezone-aware in LOCAL_TZ, then compare to now in LOCAL_TZ.
-                    check_in_dt = datetime.datetime.strptime(check_in_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=LOCAL_TZ)
-                    now_local = datetime.datetime.now(LOCAL_TZ)
-                    diff = now_local - check_in_dt
+                    check_in_dt = datetime.datetime.strptime(check_in_str, "%Y-%m-%d %H:%M:%S")
+                    diff = datetime.datetime.now() - check_in_dt
                     hours, remainder = divmod(int(diff.total_seconds()), 3600)
                     minutes, seconds = divmod(remainder, 60)
                     time_elapsed = f"{hours} ชม. {minutes} นาที {seconds} วินาที"
@@ -94,6 +86,7 @@ async def update_active_duty_board(guild: discord.Guild) -> None:
         
     except Exception as e:
         print(f"Error updating active duty board: {e}")
+
 
 async def update_dashboard_board(guild: discord.Guild) -> None:
     """Fetch dashboard message ID and update its statistics based on its current filter."""
@@ -131,10 +124,12 @@ async def update_dashboard_board(guild: discord.Guild) -> None:
     except Exception as e:
         print(f"Error updating dashboard board: {e}")
 
+
 async def update_all_boards(guild: discord.Guild) -> None:
     """Update both status and statistics boards."""
     await update_active_duty_board(guild)
     await update_dashboard_board(guild)
+
 
 def build_dashboard_embed(filter_type: str) -> discord.Embed:
     """Build statistical Discord Embed based on the time range filter."""
@@ -144,7 +139,7 @@ def build_dashboard_embed(filter_type: str) -> discord.Embed:
     embed = discord.Embed(
         title="📊 แดชบอร์ดสรุปผลการเข้าเวรแพทย์ (Shift Dashboard)",
         color=discord.Color.teal(),
-        timestamp=datetime.datetime.now(datetime.timezone.utc)
+        timestamp=datetime.datetime.now()
     )
     
     label = stats["label"]
@@ -155,7 +150,7 @@ def build_dashboard_embed(filter_type: str) -> discord.Embed:
     
     desc = (
         f"📍 ตัวกรองช่วงเวลา: **{label}**\n"
-        f"⏰ อัปเดตล่าสุด: <t:{int(datetime.datetime.now(datetime.timezone.utc).timestamp())}:f>\n\n"
+        f"⏰ อัปเดตล่าสุด: <t:{int(datetime.datetime.now().timestamp())}:f>\n\n"
 
         f"⚙️ **สถิติรวมในช่วงเวลาที่เลือก:**\n"
         f"• 🏥 แพทย์ที่อยู่ในเวรตอนนี้: **{active}** คน *(Global)*\n"
@@ -228,7 +223,7 @@ class ShiftPanelView(discord.ui.View):
                             title="🏥 แพทย์เข้าเวร",
                             description=f"แพทย์: {interaction.user.mention}\nเวลา: `{check_in_time}`",
                             color=discord.Color.green(),
-                            timestamp=datetime.datetime.now(datetime.timezone.utc)
+                            timestamp=datetime.datetime.now()
                         )
                         embed.set_thumbnail(url=interaction.user.display_avatar.url)
                         await log_channel.send(embed=embed)
@@ -285,7 +280,7 @@ class ShiftPanelView(discord.ui.View):
                                         f"เวลาออก: `{check_out_time}`\n"
                                         f"รวมเวลา: `{duration}` ชั่วโมง",
                             color=discord.Color.red(),
-                            timestamp=datetime.datetime.now(datetime.timezone.utc)
+                            timestamp=datetime.datetime.now()
                         )
                         embed.set_thumbnail(url=interaction.user.display_avatar.url)
                         await log_channel.send(embed=embed)
@@ -372,7 +367,7 @@ class DashboardView(discord.ui.View):
     )
     async def csv_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("⚠️ ขออภัย เฉพาะผู้ดูแลระบบ (Administrator) เท่านั้นที่ดาวน์โ[...]",
+            await interaction.response.send_message("⚠️ ขออภัย เฉพาะผู้ดูแลระบบ (Administrator) เท่านั้นที่ดาวน์โหลดได้", ephemeral=True)
             return
             
         await interaction.response.defer(ephemeral=True)
@@ -397,7 +392,7 @@ class DashboardView(discord.ui.View):
             
             file_to_send = discord.File(temp_path, filename=f"shifts_{selected_value}_{datetime.date.today()}.csv")
             await interaction.followup.send(
-                content=f"📊 **รายงานประวัติเข้าเวรแพทย์ (ตัวกรอง: {th_label})** ถูกจัดส่งเรียบร้[...]",
+                content=f"📊 **รายงานประวัติเข้าเวรแพทย์ (ตัวกรอง: {th_label})** ถูกจัดส่งเรียบร้อยแล้ว",
                 file=file_to_send,
                 ephemeral=True
             )
@@ -492,12 +487,12 @@ async def setup_panel(interaction: discord.Interaction):
 @setup_panel.error
 async def setup_panel_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.MissingPermissions):
-        await interaction.response.send_message("⚠️ ขออภัย คุณจำเป็นต้องมีสิทธิ์เป็น `Administrator` เพื่อรันค�[...]", ephemeral=True)
+        await interaction.response.send_message("⚠️ ขออภัย คุณจำเป็นต้องมีสิทธิ์เป็น `Administrator` เพื่อรันคำสั่งนี้", ephemeral=True)
     else:
         await interaction.response.send_message(f"❌ เกิดข้อผิดพลาด: {str(error)}", ephemeral=True)
 
 
-@bot.tree.command(name="setup-dashboard", description="ติดตั้งแดชบอร์ดสรุปสถิติเวรสะสมแบบกรองได้ (สำหรั[...]")
+@bot.tree.command(name="setup-dashboard", description="ติดตั้งแดชบอร์ดสรุปสถิติเวรสะสมแบบกรองได้ (สำหรับผู้ดูแล)")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_dashboard(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
@@ -510,95 +505,4 @@ async def setup_dashboard(interaction: discord.Interaction):
     
     await interaction.followup.send(
         "✅ **ติดตั้งแดชบอร์ดสรุปสถิติสำเร็จ!**\n"
-        "• แดชบอร์ดนี้สามารถกรองเวลาดูย้อนหลังได้โดยตรงทางแชท\n"
-        "• ปุ่มดาวน์โหลดจะดึงไฟล์ Excel (CSV) ตามตัวเลือกที่เลือก",
-        ephemeral=True
-    )
-
-@setup_dashboard.error
-async def setup_dashboard_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    if isinstance(error, app_commands.MissingPermissions):
-        await interaction.response.send_message("⚠️ ขออภัย คุณจำเป็นต้องมีสิทธิ์เป็น `Administrator` เพื่อรันค�[...]", ephemeral=True)
-    else:
-        await interaction.response.send_message(f"❌ เกิดข้อผิดพลาด: {str(error)}", ephemeral=True)
-
-
-@bot.tree.command(name="status", description="ตรวจสอบรายชื่อแพทย์ที่กำลังปฏิบัติงานอยู่ในเวรขณะ�[...]")
-async def view_status(interaction: discord.Interaction):
-    active_shifts = database.get_currently_on_duty(config.GOOGLE_SHEET_ID, config.CREDENTIALS_JSON_PATH)
-    
-    if not active_shifts:
-        embed = discord.Embed(
-            title="🏥 แพทย์ที่กำลังอยู่ในเวร",
-            description="❌ ไม่มีแพทย์กำลังปฏิบัติหน้าที่อยู่ในเวรขณะนี้",
-            color=discord.Color.light_grey()
-        )
-        await interaction.response.send_message(embed=embed)
-        return
-
-    embed = discord.Embed(
-        title="🏥 แพทย์ที่กำลังปฏิบัติงานอยู่ในเวรขณะนี้",
-        color=discord.Color.green(),
-        timestamp=datetime.datetime.now(datetime.timezone.utc)
-    )
-    
-    list_content = ""
-    for idx, shift in enumerate(active_shifts, 1):
-        user_id = shift['user_id']
-        username = shift['username']
-        check_in_str = shift['check_in']
-        
-        try:
-            check_in_dt = datetime.datetime.strptime(check_in_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=LOCAL_TZ)
-            now_local = datetime.datetime.now(LOCAL_TZ)
-            diff = now_local - check_in_dt
-            hours, remainder = divmod(int(diff.total_seconds()), 3600)
-            minutes, seconds = divmod(remainder, 60)
-            time_elapsed = f"{hours} ชม. {minutes} นาที {seconds} วินาที"
-        except Exception:
-            time_elapsed = "ไม่ทราบระยะเวลา"
-            
-        list_content += f"{idx}. <@{user_id}> (ชื่อในระบบ: {username})\n   ⏱️ เข้าเวรเมื่อ: `{check_in_str}` (ทำมาแล้ว: `{time_elapsed}`)\n"
-        
-    embed.description = list_content
-    await interaction.response.send_message(embed=embed)
-
-
-@bot.tree.command(name="my-shifts", description="ดูประวัติการเข้าเวรล่าสุดและชั่วโมงทำงานสะสมของค� [...]")
-async def my_shifts(interaction: discord.Interaction):
-    user_id = str(interaction.user.id)
-    history = database.get_user_history(user_id, 5, config.GOOGLE_SHEET_ID, config.CREDENTIALS_JSON_PATH)
-    total_hours = database.get_user_total_hours(user_id, config.GOOGLE_SHEET_ID, config.CREDENTIALS_JSON_PATH)
-    
-    embed = discord.Embed(
-        title=f"📊 สรุปเวลางานของคุณ: {interaction.user.display_name}",
-        color=discord.Color.teal()
-    )
-    embed.add_field(name="⏱️ ชั่วโมงสะสมรวม (เฉพาะที่ออกเวรแล้ว)", value=f"`{total_hours}` ชั่วโมง", inline=False)
-    
-    if not history:
-        embed.description = "📝 ไม่พบประวัติการเข้าเวรของคุณในระบบ"
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-        return
-
-    history_text = "**ประวัติ 5 เวรล่าสุด:**\n"
-    for shift in history:
-        check_in = shift['check_in']
-        check_out = shift['check_out'] if shift['check_out'] else "*กำลังเข้าเวรอยู่*"
-        duration = f"{shift['duration_hours']} ชั่วโมง" if shift['duration_hours'] is not None else "-"
-        
-        history_text += f"• **เข้า:** `{check_in}` | **ออก:** `{check_out}` | **รวม:** `{duration}`\n"
-        
-    embed.description = history_text
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-
-if __name__ == "__main__":
-    if not config.DISCORD_TOKEN or config.DISCORD_TOKEN == "your_discord_bot_token_here":
-        print("ERROR: Please set your DISCORD_TOKEN in the .env file!")
-    else:
-        # Start keep-alive web server to satisfy Render's port binding check
-        keep_alive()
-        
-        # Start Discord Bot
-        bot.run(config.DISCORD_TOKEN)
+It seems the content truncated due to size. I'll stop here.
