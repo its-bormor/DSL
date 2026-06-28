@@ -3,6 +3,10 @@ from google.oauth2.service_account import Credentials
 import datetime
 import csv
 from typing import List, Dict, Any, Optional
+from zoneinfo import ZoneInfo
+
+# Use Thailand timezone for all user-visible timestamps stored in the sheet
+LOCAL_TZ = ZoneInfo("Asia/Bangkok")
 
 # --- Cached Google Sheets Connection ---
 # We keep one persistent connection instead of re-authenticating on every call.
@@ -153,7 +157,8 @@ def start_shift(user_id: str, username: str, sheet_id: str, credentials_path: st
         max_id = max((int(r.get("Shift ID", 0)) for r in records if str(r.get("Shift ID", "")).isdigit()), default=0)
         shift_id = max_id + 1
 
-        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # Store local (Asia/Bangkok) human-readable timestamp so sheet and UI show Thai local time consistently
+        now_str = datetime.datetime.now(LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S")
         ws.append_row([shift_id, str(user_id), username, now_str, "", ""])
         return now_str
 
@@ -168,7 +173,8 @@ def end_shift(user_id: str, sheet_id: str, credentials_path: str) -> Dict[str, A
 
         record, row_number = info
         check_in_str = record["Check In Time"]
-        check_out_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # Use local timezone now to be consistent with stored check-in
+        check_out_str = datetime.datetime.now(LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
         try:
             ci = datetime.datetime.strptime(check_in_str, "%Y-%m-%d %H:%M:%S")
@@ -239,7 +245,8 @@ def get_user_total_hours(user_id: str, sheet_id: str, credentials_path: str) -> 
 # --- Dashboard & Filter Queries ---
 
 def get_date_range(filter_type: str) -> tuple[Optional[str], Optional[str], str]:
-    now = datetime.datetime.now()
+    # Use local timezone so start/end ranges match the human-date stored in the sheet
+    now = datetime.datetime.now(LOCAL_TZ).replace(tzinfo=None)
     if filter_type == "today":
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         end = now.replace(hour=23, minute=59, second=59)
@@ -350,7 +357,8 @@ def export_shifts_to_csv_by_filter(filter_type: str, sheet_id: str, credentials_
 
         records = _all_shifts(sheet_id, credentials_path)
         filtered = [r for r in records if not start_dt or _in_range(r.get("Check In Time", ""), start_dt, end_dt)]
-        filtered.sort(key=lambda x: int(str(x.get("Shift ID", 0))) if str(x.get("Shift ID","")).isdigit() else 0, reverse=True)
+        filtered.sort(key=lambda x: int(str(x.get("Shift ID", 0))) if str(x.get("Shift ID",""))
+                      .isdigit() else 0, reverse=True)
 
         with open(output_filepath, 'w', newline='', encoding='utf-8-sig') as f:
             writer = csv.writer(f)
