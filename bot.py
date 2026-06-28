@@ -61,7 +61,7 @@ async def update_active_duty_board(guild: discord.Guild) -> None:
         )
         
         if not active_shifts:
-            embed.description = "❌ ขณะนี้ไม่มีแพทย์ปฏิบัติงานในเวร\n\n*(แพทย์สามารถเข้าเวรได้โดยกดปุ่ม **เข้าเวร (Check In)** ด้านบน)*"
+            embed.description = "❌ ขณะนี้ไม่มีแพทย์ปฏิบัติงานในเวร\n\n*(แพทย์สามารถเข้าเวรได้โดยกดปุ่ม \"เข้าเวร\")*"
             embed.color = discord.Color.light_grey()
         else:
             description_text = "⏱️ **กำลังปฏิบัติงาน:**\n\n"
@@ -73,8 +73,8 @@ async def update_active_duty_board(guild: discord.Guild) -> None:
                     check_in_dt = datetime.datetime.strptime(check_in_str, "%Y-%m-%d %H:%M:%S")
                     diff = datetime.datetime.now() - check_in_dt
                     hours, remainder = divmod(int(diff.total_seconds()), 3600)
-                    minutes, _ = divmod(remainder, 60)
-                    time_elapsed = f"{hours} ชม. {minutes} นาที"
+                    minutes, seconds = divmod(remainder, 60)
+                    time_elapsed = f"{hours} ชม. {minutes} นาที {seconds} วินาที"
                 except Exception:
                     time_elapsed = "ไม่ทราบระยะเวลา"
                     
@@ -204,7 +204,7 @@ class ShiftPanelView(discord.ui.View):
             
             # Respond to user immediately
             await interaction.followup.send(
-                f"🟢 **เข้าเวรสำเร็จ!**\nลงชื่อเข้าเวรเมื่อ: `{check_in_time}`\nขอให้มีความสุขกับการทำงานครับ 🩺", 
+                f"🟢 **เข้าเวรสำเร็จ!**\nลงชื่อเข้าเวรเมื่อ: `{check_in_time}`\nขอให้มีความสุขกับการทำงานในวันนี้ครับ! 💪",
                 ephemeral=True
             )
             
@@ -363,7 +363,7 @@ class DashboardView(discord.ui.View):
     )
     async def csv_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("⚠️ ขออภัย เฉพาะผู้ดูแลระบบ (Administrator) เท่านั้นที่ดาวน์โหลดรายงานได้", ephemeral=True)
+            await interaction.response.send_message("⚠️ ขออภัย เฉพาะผู้ดูแลระบบ (Administrator) เท่านั้นที่ดาวน์โหลดได้", ephemeral=True)
             return
             
         await interaction.response.defer(ephemeral=True)
@@ -388,7 +388,7 @@ class DashboardView(discord.ui.View):
             
             file_to_send = discord.File(temp_path, filename=f"shifts_{selected_value}_{datetime.date.today()}.csv")
             await interaction.followup.send(
-                content=f"📊 **รายงานประวัติเข้าเวรแพทย์ (ตัวกรอง: {th_label})** ถูกจัดส่งเรียบร้อยแล้วครับ",
+                content=f"📊 **รายงานประวัติเข้าเวรแพทย์ (ตัวกรอง: {th_label})** ถูกจัดส่งเรียบร้อยแล้ว",
                 file=file_to_send,
                 ephemeral=True
             )
@@ -444,7 +444,7 @@ bot = ShiftBot()
 
 # --- Slash Commands ---
 
-@bot.tree.command(name="setup", description="ติดตั้งปุ่มกดเข้าเวร-ออกเวร และบอร์ดรายชื่อคนเข้าเวรปัจจุบัน (สำหรับผู้ดูแลระบบ)")
+@bot.tree.command(name="setup", description="ติดตั้งปุ่มกดเข้าเวร-ออกเวร และบอร์ดรายชื่อคนเข้าเวร")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_panel(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
@@ -454,7 +454,7 @@ async def setup_panel(interaction: discord.Interaction):
         description="กรุณากดปุ่มด้านล่างเพื่อลงเวลาทำงานของท่าน\n\n"
                     "🟢 **เข้าเวร (Check In)**: บันทึกเวลาเริ่มต้นทำงานในเวร\n"
                     "🔴 **ออกเวร (Check Out)**: บันทึกเวลาเลิกงานและคำนวณชั่วโมง\n\n"
-                    "*ประวัติและชั่วโมงการทำงานทั้งหมดจะถูกจัดเก็บลงฐานข้อมูลเพื่อสรุปรายงานต่อไป*",
+                    "*ประวัติและชั่วโมงการทำงานทั้งหมดจะถูกจัดเก็บลงฐานข้อมูลเพื่อสรุปสถิติรายเดือน*",
         color=discord.Color.blue()
     )
     panel_embed.set_footer(text="ระบบบันทึกเวลาเวรแพทย์อัตโนมัติ")
@@ -462,7 +462,7 @@ async def setup_panel(interaction: discord.Interaction):
     
     active_embed = discord.Embed(
         title="🏥 รายชื่อแพทย์ที่กำลังปฏิบัติงานอยู่ในเวร (Active Doctors)",
-        description="❌ ขณะนี้ไม่มีแพทย์ปฏิบัติงานในเวร\n\n*(แพทย์สามารถเข้าเวรได้โดยกดปุ่ม **เข้าเวร (Check In)** ด้านบน)*",
+        description="❌ ขณะนี้ไม่มีแพทย์ปฏิบัติงานในเวร\n\n*(แพทย์สามารถเข้าเวรได้โดยกดปุ่ม \"เข้าเวร\")*",
         color=discord.Color.light_grey()
     )
     active_embed.set_footer(text="อัปเดตอัตโนมัติเรียลไทม์")
@@ -488,7 +488,7 @@ async def setup_panel_error(interaction: discord.Interaction, error: app_command
         await interaction.response.send_message(f"❌ เกิดข้อผิดพลาด: {str(error)}", ephemeral=True)
 
 
-@bot.tree.command(name="setup-dashboard", description="ติดตั้งแดชบอร์ดสรุปสถิติเวรสะสมแบบกรองได้ (สำหรับผู้ดูแลระบบ)")
+@bot.tree.command(name="setup-dashboard", description="ติดตั้งแดชบอร์ดสรุปสถิติเวรสะสมแบบกรองได้ (สำหรับ Admin)")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_dashboard(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
@@ -544,8 +544,8 @@ async def view_status(interaction: discord.Interaction):
             now = datetime.datetime.now()
             diff = now - check_in_dt
             hours, remainder = divmod(int(diff.total_seconds()), 3600)
-            minutes, _ = divmod(remainder, 60)
-            time_elapsed = f"{hours} ชม. {minutes} นาที"
+            minutes, seconds = divmod(remainder, 60)
+            time_elapsed = f"{hours} ชม. {minutes} นาที {seconds} วินาที"
         except Exception:
             time_elapsed = "ไม่ทราบระยะเวลา"
             
