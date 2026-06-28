@@ -5,6 +5,7 @@ import os
 import datetime
 from zoneinfo import ZoneInfo
 import tempfile
+import asyncio
 import config
 import database
 from flask import Flask
@@ -39,11 +40,14 @@ def keep_alive():
 # --- Helper: parse sheet time to local aware datetime ---
 def parse_sheet_time_to_local(s: str) -> datetime.datetime | None:
     """Parse a "YYYY-MM-DD HH:MM:SS" timestamp from the sheet into a timezone-aware
-    datetime in LOCAL_TZ. Logic:
+    datetime in LOCAL_TZ.
+
+    Logic:
       - Try parsing as naive datetime.
       - Assume it's LOCAL_TZ first.
       - If that local time appears to be in the future by >1 hour, interpret the
         original naive value as UTC and convert to LOCAL_TZ instead.
+
     Returns timezone-aware datetime in LOCAL_TZ or None on parse error.
     """
     if not s:
@@ -93,31 +97,33 @@ async def update_active_duty_board(guild: discord.Guild) -> None:
         )
 
         if not active_shifts:
-            embed.description = "❌ ขณะนี้ไม่มีแพทย์ปฏิบัติงานในเวร\n\n*(แพทย์สามารถเข้าเวรได้โดยกดปุ่ม \"เข้าเวร\")*"
+            embed.description = (
+                "❌ ขณะนี้ไม่มีแพทย์ปฏิบัติงานในเวร\n\n"
+                "*(แพทย์สามารถเข้าเวรได้โดยกดปุ่ม \"เข้าเวร\")*"
+            )
             embed.color = discord.Color.light_grey()
         else:
-            description_text = "⏱️ **กำลังปฏิบัติงาน:**\n\n"
+            description_lines = ["⏱️ **กำลังปฏิบัติงาน:**\n"]
             now_local = datetime.datetime.now(LOCAL_TZ)
+
             for idx, shift in enumerate(active_shifts, 1):
                 user_id = shift.get('user_id')
                 check_in_str = shift.get('check_in') or ""
 
-                try:
-                    check_in_dt = parse_sheet_time_to_local(check_in_str)
-                    if check_in_dt is None:
-                        raise ValueError("parse error")
+                check_in_dt = parse_sheet_time_to_local(check_in_str)
+                if check_in_dt is None:
+                    time_elapsed = "ไม่ทราบระยะเวลา"
+                else:
                     diff = now_local - check_in_dt
-                    # Clamp negative diffs to zero to avoid showing negative hours
                     if diff.total_seconds() < 0:
                         diff = datetime.timedelta(0)
                     hours, remainder = divmod(int(diff.total_seconds()), 3600)
                     minutes, seconds = divmod(remainder, 60)
                     time_elapsed = f"{hours} ชม. {minutes} นาที {seconds} วินาที"
-                except Exception:
-                    time_elapsed = "ไม่ทราบระยะเวลา"
 
-                description_text += f"{idx}. <@{user_id}> \n   ⏱️ เข้าเวรเมื่อ: `{check_in_str}` (อยู่ในเวรมาแล้ว: `{time_elapsed}`)\n\n"
-            embed.description = description_text
+                description_lines.append(f"{idx}. <@{user_id}>\n   ⏱️ เข้าเวรเมื่อ: `{check_in_str}` (อยู่ในเวรมาแล้ว: `{time_elapsed}`)\n")
+
+            embed.description = "\n".join(description_lines)
 
         embed.set_footer(text="อัปเดตอัตโนมัติเรียลไทม์")
         await message.edit(embed=embed)
@@ -189,7 +195,6 @@ def build_dashboard_embed(filter_type: str) -> discord.Embed:
     desc = (
         f"📍 ตัวกรองช่วงเวลา: **{label}**\n"
         f"⏰ อัปเดตล่าสุด: <t:{int(datetime.datetime.now(datetime.timezone.utc).timestamp())}:f>\n\n"
-
         f"⚙️ **สถิติรวมในช่วงเวลาที่เลือก:**\n"
         f"• 🏥 แพทย์ที่อยู่ในเวรตอนนี้: **{active}** คน *(Global)*\n"
         f"• ⏱️ ชั่วโมงทำงานสะสมทั้งหมด: **{hours}** ชั่วโมง\n"
@@ -265,7 +270,6 @@ class ShiftPanelView(discord.ui.View):
                         )
                         embed.set_thumbnail(url=interaction.user.display_avatar.url)
                         await log_channel.send(embed=embed)
-            import asyncio
             asyncio.create_task(_background())
 
         except ValueError as e:
@@ -322,7 +326,6 @@ class ShiftPanelView(discord.ui.View):
                         )
                         embed.set_thumbnail(url=interaction.user.display_avatar.url)
                         await log_channel.send(embed=embed)
-            import asyncio
             asyncio.create_task(_background())
 
         except ValueError as e:
@@ -405,7 +408,7 @@ class DashboardView(discord.ui.View):
     )
     async def csv_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("⚠️ ขออภัย เฉพาะผู้ดูแลระบบ (Administrator) เท่านั้นที่ดาวน์โ[...]", ephemeral=True)
+            await interaction.response.send_message("⚠️ ขออภัย เฉพาะผู้ดูแลระบบ (Administrator) เท่านั้นที่ดาวน์โหลดได้", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True)
@@ -430,7 +433,7 @@ class DashboardView(discord.ui.View):
 
             file_to_send = discord.File(temp_path, filename=f"shifts_{selected_value}_{datetime.date.today()}.csv")
             await interaction.followup.send(
-                content=f"📊 **รายงานประวัติเข้าเวรแพทย์ (ตัวกรอง: {th_label})** ถูกจัดส่งเรียบร้[...]",
+                content=f"📊 **รายงานประวัติเข้าเวรแพทย์ (ตัวกรอง: {th_label})** ถูกจัดส่งเรียบร้อยแล้ว",
                 file=file_to_send,
                 ephemeral=True
             )
@@ -441,4 +444,4 @@ class DashboardView(discord.ui.View):
 
 # --- Bot Initialization ---
 
-The content truncated due to size. I'll stop here.
+Now the content truncated due to size. I'll stop here.
