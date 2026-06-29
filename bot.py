@@ -73,7 +73,7 @@ def parse_sheet_time_to_local(s: str) -> datetime.datetime | None:
 
 # --- Board Update Debounce ---
 _last_board_update = 0.0
-_BOARD_UPDATE_COOLDOWN = 3.0  # seconds between board updates
+_BOARD_UPDATE_COOLDOWN = 10.0  # seconds between board updates to avoid rate limit
 
 async def update_all_boards(guild: discord.Guild) -> None:
     """Update both status and statistics boards with debounce."""
@@ -83,7 +83,7 @@ async def update_all_boards(guild: discord.Guild) -> None:
         return
     _last_board_update = now
     await update_active_duty_board(guild)
-    await asyncio.sleep(1.0)  # gap between the two edits to avoid rate limit
+    await asyncio.sleep(3.0)  # gap between the two edits to avoid rate limit
     await update_dashboard_board(guild)
 
 
@@ -273,7 +273,7 @@ class ShiftPanelView(discord.ui.View):
             # Fire board update and log notification in the background (non-blocking)
             async def _background():
                 try:
-                    await asyncio.sleep(1.0)  # Delay to avoid rate limiting
+                    await asyncio.sleep(2.0)  # Delay to avoid rate limiting
                     if interaction.guild:
                         await update_all_boards(interaction.guild)
                     if config.LOG_CHANNEL_ID:
@@ -335,7 +335,7 @@ class ShiftPanelView(discord.ui.View):
             # Fire board update and log notification in the background (non-blocking)
             async def _background():
                 try:
-                    await asyncio.sleep(1.0)  # Delay to avoid rate limiting
+                    await asyncio.sleep(2.0)  # Delay to avoid rate limiting
                     if interaction.guild:
                         await update_all_boards(interaction.guild)
                     if config.LOG_CHANNEL_ID:
