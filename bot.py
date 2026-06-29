@@ -511,6 +511,8 @@ class ShiftBot(commands.Bot):
         logger.info(f"Bot logged in as {self.user.name} ({self.user.id})")
         if not self.background_keep_alive.is_running():
             self.background_keep_alive.start()
+        if not self.periodic_board_update.is_running():
+            self.periodic_board_update.start()
         if config.GOOGLE_SHEET_ID and config.GOOGLE_SHEET_ID != "your_google_sheet_id_here":
             for guild in self.guilds:
                 try:
@@ -524,7 +526,7 @@ class ShiftBot(commands.Bot):
     async def on_socket_raw_receive(self, msg):
         pass  # keep event loop alive
 
-    @tasks.loop(minutes=10)
+    @tasks.loop(minutes=2)
     async def background_keep_alive(self):
         """Periodically ping the keep-alive server to prevent Render from sleeping."""
         try:
@@ -536,6 +538,21 @@ class ShiftBot(commands.Bot):
 
     @background_keep_alive.before_loop
     async def before_keep_alive(self):
+        await self.wait_until_ready()
+
+    @tasks.loop(minutes=5)
+    async def periodic_board_update(self):
+        """Periodically update boards to keep activity and prevent sleeping."""
+        if not self.is_ready():
+            return
+        for guild in self.guilds:
+            try:
+                await update_all_boards(guild)
+            except Exception as e:
+                logger.warning(f"Periodic board update failed: {e}")
+
+    @periodic_board_update.before_loop
+    async def before_periodic_update(self):
         await self.wait_until_ready()
 
 bot = ShiftBot()
