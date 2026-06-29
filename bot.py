@@ -1,6 +1,6 @@
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 import os
 import datetime
 from zoneinfo import ZoneInfo
@@ -10,6 +10,10 @@ import config
 import database
 from flask import Flask
 import threading
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("bot")
 
 # Local timezone for user-visible times
 LOCAL_TZ = ZoneInfo("Asia/Bangkok")
@@ -65,6 +69,22 @@ def parse_sheet_time_to_local(s: str) -> datetime.datetime | None:
         utc_dt = naive.replace(tzinfo=datetime.timezone.utc)
         return utc_dt.astimezone(LOCAL_TZ)
     return local_dt
+
+
+# --- Board Update Debounce ---
+_last_board_update = 0.0
+_BOARD_UPDATE_COOLDOWN = 3.0  # seconds between board updates
+
+async def update_all_boards(guild: discord.Guild) -> None:
+    """Update both status and statistics boards with debounce."""
+    global _last_board_update
+    now = asyncio.get_event_loop().time()
+    if now - _last_board_update < _BOARD_UPDATE_COOLDOWN:
+        return
+    _last_board_update = now
+    await update_active_duty_board(guild)
+    await asyncio.sleep(1.0)  # gap between the two edits to avoid rate limit
+    await update_dashboard_board(guild)
 
 
 # --- Board Update Helpers ---
@@ -169,12 +189,6 @@ async def update_dashboard_board(guild: discord.Guild) -> None:
         print(f"Error updating dashboard board: {e}")
 
 
-async def update_all_boards(guild: discord.Guild) -> None:
-    """Update both status and statistics boards."""
-    await update_active_duty_board(guild)
-    await update_dashboard_board(guild)
-
-
 def build_dashboard_embed(filter_type: str) -> discord.Embed:
     """Build statistical Discord Embed based on the time range filter."""
     stats = database.get_shifts_stats(filter_type, config.GOOGLE_SHEET_ID, config.CREDENTIALS_JSON_PATH)
@@ -258,23 +272,26 @@ class ShiftPanelView(discord.ui.View):
 
             # Fire board update and log notification in the background (non-blocking)
             async def _background():
-                await asyncio.sleep(0.5)  # Small delay to avoid rate limiting
-                if interaction.guild:
-                    await update_all_boards(interaction.guild)
-                if config.LOG_CHANNEL_ID:
-                    try:
-                        log_channel = interaction.guild.get_channel(config.LOG_CHANNEL_ID)
-                        if log_channel:
-                            embed = discord.Embed(
-                                title="🏥 แพทย์เข้าเวร",
-                                description=f"แพทย์: {interaction.user.mention}\nเวลา: `{check_in_time}`",
-                                color=discord.Color.green(),
-                                timestamp=datetime.datetime.now(datetime.timezone.utc)
-                            )
-                            embed.set_thumbnail(url=interaction.user.display_avatar.url)
-                            await log_channel.send(embed=embed)
-                    except Exception as e:
-                        print(f"Error sending log message: {e}")
+                try:
+                    await asyncio.sleep(1.0)  # Delay to avoid rate limiting
+                    if interaction.guild:
+                        await update_all_boards(interaction.guild)
+                    if config.LOG_CHANNEL_ID:
+                        try:
+                            log_channel = interaction.guild.get_channel(config.LOG_CHANNEL_ID)
+                            if log_channel:
+                                embed = discord.Embed(
+                                    title="🏥 แพทย์เข้าเวร",
+                                    description=f"แพทย์: {interaction.user.mention}\nเวลา: `{check_in_time}`",
+                                    color=discord.Color.green(),
+                                    timestamp=datetime.datetime.now(datetime.timezone.utc)
+                                )
+                                embed.set_thumbnail(url=interaction.user.display_avatar.url)
+                                await log_channel.send(embed=embed)
+                        except Exception as e:
+                            logger.error(f"Error sending log message: {e}")
+                except Exception as e:
+                    logger.error(f"Background check-in task error: {e}")
             asyncio.create_task(_background())
 
         except ValueError as e:
@@ -317,26 +334,29 @@ class ShiftPanelView(discord.ui.View):
 
             # Fire board update and log notification in the background (non-blocking)
             async def _background():
-                await asyncio.sleep(0.5)  # Small delay to avoid rate limiting
-                if interaction.guild:
-                    await update_all_boards(interaction.guild)
-                if config.LOG_CHANNEL_ID:
-                    try:
-                        log_channel = interaction.guild.get_channel(config.LOG_CHANNEL_ID)
-                        if log_channel:
-                            embed = discord.Embed(
-                                title="🚪 แพทย์ออกเวร",
-                                description=f"แพทย์: {interaction.user.mention}\n"
-                                            f"เวลาเข้า: `{check_in_time}`\n"
-                                            f"เวลาออก: `{check_out_time}`\n"
-                                            f"รวมเวลา: `{duration}` ชั่วโมง",
-                                color=discord.Color.red(),
-                                timestamp=datetime.datetime.now(datetime.timezone.utc)
-                            )
-                            embed.set_thumbnail(url=interaction.user.display_avatar.url)
-                            await log_channel.send(embed=embed)
-                    except Exception as e:
-                        print(f"Error sending log message: {e}")
+                try:
+                    await asyncio.sleep(1.0)  # Delay to avoid rate limiting
+                    if interaction.guild:
+                        await update_all_boards(interaction.guild)
+                    if config.LOG_CHANNEL_ID:
+                        try:
+                            log_channel = interaction.guild.get_channel(config.LOG_CHANNEL_ID)
+                            if log_channel:
+                                embed = discord.Embed(
+                                    title="🚪 แพทย์ออกเวร",
+                                    description=f"แพทย์: {interaction.user.mention}\n"
+                                                f"เวลาเข้า: `{check_in_time}`\n"
+                                                f"เวลาออก: `{check_out_time}`\n"
+                                                f"รวมเวลา: `{duration}` ชั่วโมง",
+                                    color=discord.Color.red(),
+                                    timestamp=datetime.datetime.now(datetime.timezone.utc)
+                                )
+                                embed.set_thumbnail(url=interaction.user.display_avatar.url)
+                                await log_channel.send(embed=embed)
+                        except Exception as e:
+                            logger.error(f"Error sending log message: {e}")
+                except Exception as e:
+                    logger.error(f"Background check-out task error: {e}")
             asyncio.create_task(_background())
 
         except ValueError as e:
@@ -461,7 +481,7 @@ class ShiftBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
         intents.message_content = True
-        super().__init__(command_prefix="!", intents=intents)
+        super().__init__(command_prefix="!", intents=intents, reconnect=True)
 
     async def setup_hook(self):
         self.add_view(ShiftPanelView())
@@ -488,14 +508,35 @@ class ShiftBot(commands.Bot):
             print("Synced slash commands globally")
 
     async def on_ready(self):
-        print(f"Bot logged in as {self.user.name} ({self.user.id})")
-        print("------")
+        logger.info(f"Bot logged in as {self.user.name} ({self.user.id})")
+        if not self.background_keep_alive.is_running():
+            self.background_keep_alive.start()
         if config.GOOGLE_SHEET_ID and config.GOOGLE_SHEET_ID != "your_google_sheet_id_here":
             for guild in self.guilds:
                 try:
                     await update_all_boards(guild)
                 except Exception as e:
-                    print(f"WARNING: Could not update boards on startup (likely credentials.json is missing or sheet ID is invalid): {e}")
+                    logger.warning(f"Could not update boards on startup: {e}")
+
+    async def on_error(self, event_method: str, *args, **kwargs):
+        logger.error(f"Unhandled error in {event_method}", exc_info=True)
+
+    async def on_socket_raw_receive(self, msg):
+        pass  # keep event loop alive
+
+    @tasks.loop(minutes=10)
+    async def background_keep_alive(self):
+        """Periodically ping the keep-alive server to prevent Render from sleeping."""
+        try:
+            import urllib.request
+            port = int(os.environ.get("PORT", 8080))
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5)
+        except Exception:
+            pass
+
+    @background_keep_alive.before_loop
+    async def before_keep_alive(self):
+        await self.wait_until_ready()
 
 bot = ShiftBot()
 
