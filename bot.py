@@ -523,6 +523,12 @@ class ShiftBot(commands.Bot):
     async def on_error(self, event_method: str, *args, **kwargs):
         logger.error(f"Unhandled error in {event_method}", exc_info=True)
 
+    async def on_disconnect(self):
+        logger.warning(f"Bot disconnected from Discord at {datetime.datetime.now(LOCAL_TZ)}")
+
+    async def on_resumed(self):
+        logger.info(f"Bot resumed session at {datetime.datetime.now(LOCAL_TZ)}")
+
     async def on_socket_raw_receive(self, msg):
         pass  # keep event loop alive
 
@@ -712,6 +718,12 @@ if __name__ == "__main__":
     else:
         # Start keep-alive web server to satisfy Render's port binding check
         keep_alive()
-        
-        # Start Discord Bot
-        bot.run(config.DISCORD_TOKEN)
+
+        # Start Discord Bot with auto-restart
+        import time
+        while True:
+            try:
+                bot.run(config.DISCORD_TOKEN)
+            except Exception as e:
+                logger.error(f"Bot crashed: {e}. Restarting in 10 seconds...")
+                time.sleep(10)
