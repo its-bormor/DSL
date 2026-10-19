@@ -719,6 +719,12 @@ if __name__ == "__main__":
     else:
         # Start keep-alive web server to satisfy Render's port binding check
         keep_alive()
-        
-        # Start Discord Bot
-        bot.run(config.DISCORD_TOKEN)
+
+        # Start Discord Bot with auto-restart
+        import time
+        while True:
+            try:
+                bot.run(config.DISCORD_TOKEN)
+            except Exception as e:
+                logger.error(f"Bot crashed: {e}. Restarting in 10 seconds...")
+                time.sleep(10)
