@@ -715,12 +715,10 @@ async def my_shifts(interaction: discord.Interaction):
 
 if __name__ == "__main__":
     if not config.DISCORD_TOKEN or config.DISCORD_TOKEN == "your_discord_bot_token_here":
-        logger.error("DISCORD_TOKEN is missing or not configured.")
-        raise SystemExit(1)
-
-    # Start the HTTP server required by Render Web Service.
-    keep_alive()
-
-    # discord.py handles normal reconnects itself.
-    # Do not reuse the same Bot instance after bot.run() fails.
-    bot.run(config.DISCORD_TOKEN, log_handler=None)
+        print("ERROR: Please set your DISCORD_TOKEN in the .env file!")
+    else:
+        # Start keep-alive web server to satisfy Render's port binding check
+        keep_alive()
+        
+        # Start Discord Bot
+        bot.run(config.DISCORD_TOKEN)
