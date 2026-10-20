@@ -1,4 +1,4 @@
-import discord
+﻿import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 import os
@@ -717,14 +717,26 @@ if __name__ == "__main__":
     if not config.DISCORD_TOKEN or config.DISCORD_TOKEN == "your_discord_bot_token_here":
         print("ERROR: Please set your DISCORD_TOKEN in the .env file!")
     else:
-        # Start keep-alive web server to satisfy Render's port binding check
+        # Start keep-alive web server to satisfy Render port binding check
         keep_alive()
 
-        # Start Discord Bot with auto-restart
+        # Restart loop — create a FRESH ShiftBot() on each restart
+        # (reusing the same instance causes "Session is closed" errors)
         import time
-        while True:
+        MAX_RETRIES = 10
+        retry_count = 0
+
+        while retry_count < MAX_RETRIES:
             try:
-                bot.run(config.DISCORD_TOKEN)
+                logger.info(f"Starting bot... (attempt {retry_count + 1})")
+                fresh_bot = ShiftBot()
+                fresh_bot.run(config.DISCORD_TOKEN, reconnect=True)
+                logger.info("Bot exited cleanly.")
+                break
             except Exception as e:
-                logger.error(f"Bot crashed: {e}. Restarting in 10 seconds...")
+                retry_count += 1
+                logger.error(f"Bot crashed: {e}. Restarting in 10 seconds... ({retry_count}/{MAX_RETRIES})")
                 time.sleep(10)
+
+        if retry_count >= MAX_RETRIES:
+            logger.critical("Bot exceeded max restart attempts. Exiting.")
