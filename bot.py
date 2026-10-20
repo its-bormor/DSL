@@ -717,26 +717,27 @@ if __name__ == "__main__":
     if not config.DISCORD_TOKEN or config.DISCORD_TOKEN == "your_discord_bot_token_here":
         print("ERROR: Please set your DISCORD_TOKEN in the .env file!")
     else:
-        # Start keep-alive web server to satisfy Render port binding check
         keep_alive()
 
-        # Restart loop — create a FRESH ShiftBot() on each restart
-        # (reusing the same instance causes "Session is closed" errors)
         import time
-        MAX_RETRIES = 10
         retry_count = 0
+        MAX_RETRIES = 10
+        # Exponential backoff: 30s, 60s, 120s, 240s... (max 10 min)
+        BASE_DELAY = 30
 
         while retry_count < MAX_RETRIES:
             try:
-                logger.info(f"Starting bot... (attempt {retry_count + 1})")
+                logger.info(f"Starting bot... (attempt {retry_count + 1}/{MAX_RETRIES})")
                 fresh_bot = ShiftBot()
                 fresh_bot.run(config.DISCORD_TOKEN, reconnect=True)
                 logger.info("Bot exited cleanly.")
                 break
             except Exception as e:
                 retry_count += 1
-                logger.error(f"Bot crashed: {e}. Restarting in 10 seconds... ({retry_count}/{MAX_RETRIES})")
-                time.sleep(10)
+                delay = min(BASE_DELAY * (2 ** (retry_count - 1)), 600)  # max 10 min
+                logger.error(f"Bot crashed: {e}")
+                logger.error(f"Restarting in {delay} seconds... ({retry_count}/{MAX_RETRIES})")
+                time.sleep(delay)
 
         if retry_count >= MAX_RETRIES:
-            logger.critical("Bot exceeded max restart attempts. Exiting.")
+            logger.critical("Bot exceeded max restart attempts. Stopping.")
