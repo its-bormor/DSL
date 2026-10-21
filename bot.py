@@ -715,29 +715,10 @@ async def my_shifts(interaction: discord.Interaction):
 
 if __name__ == "__main__":
     if not config.DISCORD_TOKEN or config.DISCORD_TOKEN == "your_discord_bot_token_here":
-        print("ERROR: Please set your DISCORD_TOKEN in the .env file!")
+        logger.error("DISCORD_TOKEN is not set. Please configure it in the environment.")
     else:
         keep_alive()
-
-        import time
-        retry_count = 0
-        MAX_RETRIES = 10
-        # Exponential backoff: 30s, 60s, 120s, 240s... (max 10 min)
-        BASE_DELAY = 30
-
-        while retry_count < MAX_RETRIES:
-            try:
-                logger.info(f"Starting bot... (attempt {retry_count + 1}/{MAX_RETRIES})")
-                fresh_bot = ShiftBot()
-                fresh_bot.run(config.DISCORD_TOKEN, reconnect=True)
-                logger.info("Bot exited cleanly.")
-                break
-            except Exception as e:
-                retry_count += 1
-                delay = min(BASE_DELAY * (2 ** (retry_count - 1)), 600)  # max 10 min
-                logger.error(f"Bot crashed: {e}")
-                logger.error(f"Restarting in {delay} seconds... ({retry_count}/{MAX_RETRIES})")
-                time.sleep(delay)
-
-        if retry_count >= MAX_RETRIES:
-            logger.critical("Bot exceeded max restart attempts. Stopping.")
+        logger.info("Starting registered bot instance...")
+        # IMPORTANT: run the same instance that owns the registered slash commands.
+        # Creating a separate ShiftBot() here would leave that instance's command tree empty.
+        bot.run(config.DISCORD_TOKEN, reconnect=True)
