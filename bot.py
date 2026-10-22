@@ -513,10 +513,10 @@ class DashboardView(discord.ui.View):
 # --- Bot Initialization ---
 
 class ShiftBot(commands.Bot):
-    def __init__(self):
+    def __init__(self, proxy: str | None = None):
         intents = discord.Intents.default()
         intents.message_content = True
-        super().__init__(command_prefix="!", intents=intents, reconnect=True)
+        super().__init__(command_prefix="!", intents=intents, reconnect=True, proxy=proxy or config.DISCORD_PROXY)
 
     async def setup_hook(self):
         self.add_view(ShiftPanelView())

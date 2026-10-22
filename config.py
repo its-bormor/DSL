@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+DISCORD_PROXY = os.getenv("DISCORD_PROXY")
 GUILD_ID = os.getenv("GUILD_ID")
 LOG_CHANNEL_ID = os.getenv("LOG_CHANNEL_ID")
 
