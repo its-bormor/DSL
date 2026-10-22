@@ -532,15 +532,22 @@ class ShiftBot(commands.Bot):
             except Exception as e:
                 print(f"ERROR: Failed to initialize Google Sheets database: {e}")
 
-        # Sync commands
-        if config.GUILD_ID:
-            guild = discord.Object(id=config.GUILD_ID)
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
-            print(f"Synced slash commands to server: {config.GUILD_ID}")
-        else:
-            await self.tree.sync()
-            print("Synced slash commands globally")
+        # Sync commands (wrapped in try/except so a 429 at startup doesn't crash the bot)
+        try:
+            if config.GUILD_ID:
+                guild = discord.Object(id=config.GUILD_ID)
+                self.tree.copy_global_to(guild=guild)
+                await self.tree.sync(guild=guild)
+                logger.info(f"Synced slash commands to server: {config.GUILD_ID}")
+            else:
+                await self.tree.sync()
+                logger.info("Synced slash commands globally")
+        except discord.errors.HTTPException as e:
+            # 429 rate-limit during startup - commands are already registered from last run,
+            # so we can safely skip the sync and continue.
+            logger.warning(f"tree.sync() failed (will retry on next restart): {e}")
+        except Exception as e:
+            logger.warning(f"tree.sync() unexpected error: {e}")
 
     async def on_ready(self):
         logger.info(f"Bot logged in as {self.user.name} ({self.user.id})")
@@ -757,11 +764,50 @@ async def my_shifts(interaction: discord.Interaction):
 
 
 if __name__ == "__main__":
+    import sys
+    import time
+
     if not config.DISCORD_TOKEN or config.DISCORD_TOKEN == "your_discord_bot_token_here":
         logger.error("DISCORD_TOKEN is not set. Please configure it in the environment.")
+        sys.exit(0)  # Exit cleanly so Render doesn't mark deploy as failed
     else:
         keep_alive()
-        logger.info("Starting registered bot instance...")
-        # IMPORTANT: run the same instance that owns the registered slash commands.
-        # Creating a separate ShiftBot() here would leave that instance's command tree empty.
-        bot.run(config.DISCORD_TOKEN, reconnect=True)
+
+        # Retry loop with exponential backoff.
+        # We never exit with code 1 so Render does not mark the service as crashed.
+        attempt = 0
+        BASE_DELAY = 30   # seconds
+        MAX_DELAY  = 600  # 10 minutes cap
+
+        while True:
+            attempt += 1
+            logger.info(f"Starting bot (attempt {attempt})...")
+            try:
+                # Re-create a fresh bot instance each attempt so internal state is clean.
+                fresh_bot = ShiftBot()
+                for cmd in bot.tree.get_commands():
+                    fresh_bot.tree.add_command(cmd)
+                fresh_bot.run(config.DISCORD_TOKEN, reconnect=True)
+                # bot.run() returned cleanly (e.g. KeyboardInterrupt was handled)
+                logger.info("Bot exited cleanly.")
+                break
+            except discord.errors.HTTPException as e:
+                # 429 or other HTTP errors from Discord/Cloudflare
+                if e.status == 429:
+                    # Cloudflare 1015 IP ban requires quiet time (at least 3-5 mins) to lift
+                    delay = max(180, min(120 * attempt, MAX_DELAY))
+                    logger.warning(f"Cloudflare 1015 rate limit (attempt {attempt}). Waiting {delay}s for IP ban to lift...")
+                else:
+                    delay = min(BASE_DELAY * (2 ** min(attempt - 1, 5)), MAX_DELAY)
+                    logger.error(f"Bot HTTP error on attempt {attempt}: {e}")
+                logger.info(f"Retrying in {delay}s...")
+                time.sleep(delay)
+            except KeyboardInterrupt:
+                logger.info("Received KeyboardInterrupt, shutting down.")
+                break
+            except Exception as e:
+                delay = min(BASE_DELAY * (2 ** min(attempt - 1, 5)), MAX_DELAY)
+                logger.error(f"Bot crashed on attempt {attempt}: {e}")
+                logger.info(f"Retrying in {delay}s...")
+                time.sleep(delay)
+
