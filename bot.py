@@ -73,18 +73,32 @@ def parse_sheet_time_to_local(s: str) -> datetime.datetime | None:
 
 # --- Board Update Debounce ---
 _last_board_update = 0.0
-_BOARD_UPDATE_COOLDOWN = 10.0  # seconds between board updates to avoid rate limit
+_BOARD_UPDATE_COOLDOWN = 30.0  # seconds between board updates to avoid rate limit
+_board_update_lock: asyncio.Lock | None = None
+
+
+def _get_board_lock() -> asyncio.Lock:
+    """Lazily create the asyncio.Lock so it is bound to the running event loop."""
+    global _board_update_lock
+    if _board_update_lock is None:
+        _board_update_lock = asyncio.Lock()
+    return _board_update_lock
+
 
 async def update_all_boards(guild: discord.Guild) -> None:
-    """Update both status and statistics boards with debounce."""
+    """Update both status and statistics boards with debounce and lock."""
     global _last_board_update
-    now = asyncio.get_event_loop().time()
-    if now - _last_board_update < _BOARD_UPDATE_COOLDOWN:
-        return
-    _last_board_update = now
-    await update_active_duty_board(guild)
-    await asyncio.sleep(3.0)  # gap between the two edits to avoid rate limit
-    await update_dashboard_board(guild)
+    lock = _get_board_lock()
+    if lock.locked():
+        return  # another update already in progress, skip
+    async with lock:
+        now = asyncio.get_event_loop().time()
+        if now - _last_board_update < _BOARD_UPDATE_COOLDOWN:
+            return
+        _last_board_update = now
+        await update_active_duty_board(guild)
+        await asyncio.sleep(5.0)  # larger gap between the two edits to avoid rate limit
+        await update_dashboard_board(guild)
 
 
 # --- Board Update Helpers ---
@@ -146,7 +160,13 @@ async def update_active_duty_board(guild: discord.Guild) -> None:
             embed.description = "\n".join(description_lines)
 
         embed.set_footer(text="อัปเดตอัตโนมัติเรียลไทม์")
-        await message.edit(embed=embed)
+        try:
+            await message.edit(embed=embed)
+        except discord.errors.HTTPException as e:
+            if e.status == 429:
+                logger.warning("Active duty board edit rate-limited (429), skipping this cycle.")
+            else:
+                raise
 
     except Exception as e:
         print(f"Error updating active duty board: {e}")
@@ -388,7 +408,12 @@ class DashboardSelect(discord.ui.Select):
         if is_interaction_expired(interaction):
             return
         # Defer first to avoid 3-second interaction timeout from Google Sheets API latency
-        await interaction.response.defer()
+        try:
+            await interaction.response.defer()
+        except discord.errors.HTTPException as e:
+            # Bot is being rate-limited by Discord/Cloudflare; silently drop
+            logger.warning(f"DashboardSelect defer rate-limited: {e}")
+            return
 
         filter_type = self.values[0]
 
@@ -396,9 +421,12 @@ class DashboardSelect(discord.ui.Select):
         for option in self.options:
             option.default = (option.value == filter_type)
 
-        embed = build_dashboard_embed(filter_type)
-        # Use edit_original_response after deferring
-        await interaction.edit_original_response(embed=embed, view=self.view)
+        try:
+            embed = build_dashboard_embed(filter_type)
+            # Use edit_original_response after deferring
+            await interaction.edit_original_response(embed=embed, view=self.view)
+        except discord.errors.HTTPException as e:
+            logger.warning(f"DashboardSelect edit_original_response rate-limited: {e}")
 
 
 class DashboardView(discord.ui.View):
@@ -419,7 +447,11 @@ class DashboardView(discord.ui.View):
         if is_interaction_expired(interaction):
             return
         # Defer immediately to prevent timeout during Google Sheets API call
-        await interaction.response.defer()
+        try:
+            await interaction.response.defer()
+        except discord.errors.HTTPException as e:
+            logger.warning(f"Refresh button defer rate-limited: {e}")
+            return
 
         select_menu = [item for item in self.children if isinstance(item, DashboardSelect)][0]
         selected_value = "all"
@@ -428,8 +460,11 @@ class DashboardView(discord.ui.View):
                 selected_value = opt.value
                 break
 
-        embed = build_dashboard_embed(selected_value)
-        await interaction.edit_original_response(embed=embed, view=self)
+        try:
+            embed = build_dashboard_embed(selected_value)
+            await interaction.edit_original_response(embed=embed, view=self)
+        except discord.errors.HTTPException as e:
+            logger.warning(f"Refresh button edit_original_response rate-limited: {e}")
 
     @discord.ui.button(
         label="ดาวน์โหลด CSV", 
@@ -546,14 +581,22 @@ class ShiftBot(commands.Bot):
     async def before_keep_alive(self):
         await self.wait_until_ready()
 
-    @tasks.loop(minutes=5)
+    @tasks.loop(minutes=3)
     async def periodic_board_update(self):
         """Periodically update boards to keep activity and prevent sleeping."""
         if not self.is_ready():
             return
+        global _last_board_update
+        # Reset debounce timestamp so the scheduled tick always fires
+        _last_board_update = 0.0
         for guild in self.guilds:
             try:
                 await update_all_boards(guild)
+            except discord.errors.HTTPException as e:
+                if e.status == 429:
+                    logger.warning(f"Board update rate-limited (429), will retry next cycle.")
+                else:
+                    logger.warning(f"Periodic board update HTTP error: {e}")
             except Exception as e:
                 logger.warning(f"Periodic board update failed: {e}")
 
