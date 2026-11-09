@@ -27,8 +27,8 @@ def home():
 
 
 def run_web_server():
-    # Render passes the port via PORT environment variable (defaults to 8080)
-    port = int(os.environ.get("PORT", 8080))
+    # Support bot-hosting.net (SERVER_PORT) and Render/others (PORT), defaults to 8080
+    port = int(os.environ.get('SERVER_PORT') or os.environ.get('PORT') or 8080)
     # Run server quietly
     web_app.run(host='0.0.0.0', port=port)
 
@@ -159,7 +159,7 @@ async def update_active_duty_board(guild: discord.Guild) -> None:
 
             embed.description = "\n".join(description_lines)
 
-        embed.set_footer(text="อัปเดตอัตโนมัติเรียลไทม์")
+        embed.set_footer(text="อัปเดตทุก5นาที")
         try:
             await message.edit(embed=embed)
         except discord.errors.HTTPException as e:
@@ -579,7 +579,7 @@ class ShiftBot(commands.Bot):
         """Periodically ping the keep-alive server to prevent Render from sleeping."""
         try:
             import urllib.request
-            port = int(os.environ.get("PORT", 8080))
+            port = int(os.environ.get('SERVER_PORT') or os.environ.get('PORT') or 8080)
             urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5)
         except Exception:
             pass
@@ -637,7 +637,7 @@ async def setup_panel(interaction: discord.Interaction):
         description="❌ ขณะนี้ไม่มีแพทย์ปฏิบัติงานในเวร\n\n*(แพทย์สามารถเข้าเวรได้โดยกดปุ่ม \"เข้าเวร\")*",
         color=discord.Color.light_grey()
     )
-    active_embed.set_footer(text="อัปเดตอัตโนมัติเรียลไทม์")
+    active_embed.set_footer(text="อัปเดตทุก5นาที")
     status_message = await interaction.channel.send(embed=active_embed)
 
     database.set_setting("active_status_channel_id", str(interaction.channel_id), config.GOOGLE_SHEET_ID, config.CREDENTIALS_JSON_PATH)
