@@ -71,10 +71,11 @@ def parse_sheet_time_to_local(s: str) -> datetime.datetime | None:
     return local_dt
 
 
-# --- Board Update Debounce ---
+# --- Board Update Debounce & Helpers ---
 _last_board_update = 0.0
-_BOARD_UPDATE_COOLDOWN = 30.0  # seconds between board updates to avoid rate limit
+_BOARD_UPDATE_COOLDOWN = 10.0  # seconds between board updates to avoid rate limit
 _board_update_lock: asyncio.Lock | None = None
+_current_bot: Optional[commands.Bot] = None
 
 
 def _get_board_lock() -> asyncio.Lock:
@@ -85,7 +86,27 @@ def _get_board_lock() -> asyncio.Lock:
     return _board_update_lock
 
 
-async def update_all_boards(guild: discord.Guild) -> None:
+async def _resolve_channel(channel_id: int, guild: Optional[discord.Guild] = None) -> Optional[discord.abc.GuildChannel]:
+    """Resolve a channel by ID safely: cache check first, then fallback to API fetch."""
+    global _current_bot
+    bot_inst = _current_bot or (bot if "bot" in globals() else None)
+    if guild:
+        ch = guild.get_channel(channel_id)
+        if ch:
+            return ch
+    if bot_inst:
+        ch = bot_inst.get_channel(channel_id)
+        if ch:
+            return ch
+        try:
+            return await bot_inst.fetch_channel(channel_id)
+        except Exception as e:
+            logger.warning(f"Could not fetch channel {channel_id}: {e}")
+            return None
+    return None
+
+
+async def update_all_boards(guild: Optional[discord.Guild] = None) -> None:
     """Update both status and statistics boards with debounce and lock."""
     global _last_board_update
     lock = _get_board_lock()
@@ -102,10 +123,14 @@ async def update_all_boards(guild: discord.Guild) -> None:
 
 
 # --- Board Update Helpers ---
-async def update_active_duty_board(guild: discord.Guild) -> None:
+async def update_active_duty_board(guild: Optional[discord.Guild] = None) -> None:
     """Fetch active status message ID and update its content with current checked-in doctors."""
-    channel_id_str = database.get_setting("active_status_channel_id", config.GOOGLE_SHEET_ID, config.CREDENTIALS_JSON_PATH)
-    msg_id_str = database.get_setting("active_status_message_id", config.GOOGLE_SHEET_ID, config.CREDENTIALS_JSON_PATH)
+    channel_id_str = await asyncio.to_thread(
+        database.get_setting, "active_status_channel_id", config.GOOGLE_SHEET_ID, config.CREDENTIALS_JSON_PATH
+    )
+    msg_id_str = await asyncio.to_thread(
+        database.get_setting, "active_status_message_id", config.GOOGLE_SHEET_ID, config.CREDENTIALS_JSON_PATH
+    )
 
     if not channel_id_str or not msg_id_str:
         return
@@ -113,16 +138,20 @@ async def update_active_duty_board(guild: discord.Guild) -> None:
     try:
         channel_id = int(channel_id_str)
         msg_id = int(msg_id_str)
-        channel = guild.get_channel(channel_id)
+        channel = await _resolve_channel(channel_id, guild)
         if not channel:
+            logger.warning(f"Active duty board channel {channel_id} not found.")
             return
 
         try:
             message = await channel.fetch_message(msg_id)
         except discord.NotFound:
+            logger.warning(f"Active duty board message {msg_id} not found in channel {channel_id}.")
             return
 
-        active_shifts = database.get_currently_on_duty(config.GOOGLE_SHEET_ID, config.CREDENTIALS_JSON_PATH)
+        active_shifts = await asyncio.to_thread(
+            database.get_currently_on_duty, config.GOOGLE_SHEET_ID, config.CREDENTIALS_JSON_PATH
+        )
 
         embed = discord.Embed(
             title="🏥 รายชื่อแพทย์ที่กำลังปฏิบัติงานอยู่ในเวร (Active Doctors)",
@@ -159,23 +188,27 @@ async def update_active_duty_board(guild: discord.Guild) -> None:
 
             embed.description = "\n".join(description_lines)
 
-        embed.set_footer(text="อัปเดตทุก5นาที")
+        embed.set_footer(text="อัปเดตอัตโนมัติทุกๆ 5 นาที")
         try:
             await message.edit(embed=embed)
         except discord.errors.HTTPException as e:
             if e.status == 429:
                 logger.warning("Active duty board edit rate-limited (429), skipping this cycle.")
             else:
-                raise
+                logger.warning(f"Active duty board edit failed: {e}")
 
     except Exception as e:
-        print(f"Error updating active duty board: {e}")
+        logger.error(f"Error updating active duty board: {e}", exc_info=True)
 
 
-async def update_dashboard_board(guild: discord.Guild) -> None:
+async def update_dashboard_board(guild: Optional[discord.Guild] = None) -> None:
     """Fetch dashboard message ID and update its statistics based on its current filter."""
-    channel_id_str = database.get_setting("dashboard_channel_id", config.GOOGLE_SHEET_ID, config.CREDENTIALS_JSON_PATH)
-    msg_id_str = database.get_setting("dashboard_message_id", config.GOOGLE_SHEET_ID, config.CREDENTIALS_JSON_PATH)
+    channel_id_str = await asyncio.to_thread(
+        database.get_setting, "dashboard_channel_id", config.GOOGLE_SHEET_ID, config.CREDENTIALS_JSON_PATH
+    )
+    msg_id_str = await asyncio.to_thread(
+        database.get_setting, "dashboard_message_id", config.GOOGLE_SHEET_ID, config.CREDENTIALS_JSON_PATH
+    )
 
     if not channel_id_str or not msg_id_str:
         return
@@ -183,13 +216,15 @@ async def update_dashboard_board(guild: discord.Guild) -> None:
     try:
         channel_id = int(channel_id_str)
         msg_id = int(msg_id_str)
-        channel = guild.get_channel(channel_id)
+        channel = await _resolve_channel(channel_id, guild)
         if not channel:
+            logger.warning(f"Dashboard channel {channel_id} not found.")
             return
 
         try:
             message = await channel.fetch_message(msg_id)
         except discord.NotFound:
+            logger.warning(f"Dashboard message {msg_id} not found in channel {channel_id}.")
             return
 
         filter_type = "all"
@@ -202,11 +237,16 @@ async def update_dashboard_board(guild: discord.Guild) -> None:
             elif "ตัวกรองช่วงเวลา: **เดือนนี้**" in desc:
                 filter_type = "month"
 
-        embed = build_dashboard_embed(filter_type)
+        embed = await asyncio.to_thread(build_dashboard_embed, filter_type)
         await message.edit(embed=embed)
 
+    except discord.errors.HTTPException as e:
+        if e.status == 429:
+            logger.warning("Dashboard board edit rate-limited (429), skipping this cycle.")
+        else:
+            logger.warning(f"Dashboard board edit failed: {e}")
     except Exception as e:
-        print(f"Error updating dashboard board: {e}")
+        logger.error(f"Error updating dashboard board: {e}", exc_info=True)
 
 
 def build_dashboard_embed(filter_type: str) -> discord.Embed:
@@ -247,7 +287,7 @@ def build_dashboard_embed(filter_type: str) -> discord.Embed:
             desc += f"**{idx}.** {username} | `{doc_hours}` ชม. ({count} เวร)\n"
 
     embed.description = desc
-    embed.set_footer(text="ระบบวิเคราะห์ผลชั่วโมงแพทย์อัตโนมัติ")
+    embed.set_footer(text="อัปเดตอัตโนมัติทุกๆ 5 นาที")
     return embed
 
 
@@ -514,9 +554,11 @@ class DashboardView(discord.ui.View):
 
 class ShiftBot(commands.Bot):
     def __init__(self, proxy: str | None = None):
+        global _current_bot
         intents = discord.Intents.default()
         intents.message_content = True
         super().__init__(command_prefix="!", intents=intents, reconnect=True, proxy=proxy or config.DISCORD_PROXY)
+        _current_bot = self
 
     async def setup_hook(self):
         self.add_view(ShiftPanelView())
@@ -550,17 +592,18 @@ class ShiftBot(commands.Bot):
             logger.warning(f"tree.sync() unexpected error: {e}")
 
     async def on_ready(self):
+        global _current_bot
+        _current_bot = self
         logger.info(f"Bot logged in as {self.user.name} ({self.user.id})")
         if not self.background_keep_alive.is_running():
             self.background_keep_alive.start()
         if not self.periodic_board_update.is_running():
             self.periodic_board_update.start()
         if config.GOOGLE_SHEET_ID and config.GOOGLE_SHEET_ID != "your_google_sheet_id_here":
-            for guild in self.guilds:
-                try:
-                    await update_all_boards(guild)
-                except Exception as e:
-                    logger.warning(f"Could not update boards on startup: {e}")
+            try:
+                await update_all_boards()
+            except Exception as e:
+                logger.warning(f"Could not update boards on startup: {e}")
 
     async def on_error(self, event_method: str, *args, **kwargs):
         logger.error(f"Unhandled error in {event_method}", exc_info=True)
@@ -574,9 +617,9 @@ class ShiftBot(commands.Bot):
     async def on_socket_raw_receive(self, msg):
         pass  # keep event loop alive
 
-    @tasks.loop(minutes=2)
+    @tasks.loop(minutes=5)
     async def background_keep_alive(self):
-        """Periodically ping the keep-alive server to prevent Render from sleeping."""
+        """Periodically ping the keep-alive server to prevent hosting from sleeping."""
         try:
             import urllib.request
             port = int(os.environ.get('SERVER_PORT') or os.environ.get('PORT') or 8080)
@@ -588,30 +631,40 @@ class ShiftBot(commands.Bot):
     async def before_keep_alive(self):
         await self.wait_until_ready()
 
-    @tasks.loop(minutes=3)
+    @tasks.loop(minutes=5)
     async def periodic_board_update(self):
-        """Periodically update boards to keep activity and prevent sleeping."""
+        """Periodically update boards every 5 minutes."""
         if not self.is_ready():
             return
         global _last_board_update
         # Reset debounce timestamp so the scheduled tick always fires
         _last_board_update = 0.0
-        for guild in self.guilds:
-            try:
-                await update_all_boards(guild)
-            except discord.errors.HTTPException as e:
-                if e.status == 429:
-                    logger.warning(f"Board update rate-limited (429), will retry next cycle.")
-                else:
-                    logger.warning(f"Periodic board update HTTP error: {e}")
-            except Exception as e:
-                logger.warning(f"Periodic board update failed: {e}")
+        try:
+            await update_all_boards()
+        except discord.errors.HTTPException as e:
+            if e.status == 429:
+                logger.warning("Board update rate-limited (429), will retry next cycle.")
+            else:
+                logger.warning(f"Periodic board update HTTP error: {e}")
+        except Exception as e:
+            logger.error(f"Periodic board update failed: {e}", exc_info=True)
 
     @periodic_board_update.before_loop
     async def before_periodic_update(self):
         await self.wait_until_ready()
 
+    @periodic_board_update.error
+    async def periodic_board_update_error(self, error):
+        logger.error(f"Error in periodic_board_update task: {error}", exc_info=True)
+        await asyncio.sleep(10)
+        if not self.periodic_board_update.is_running():
+            try:
+                self.periodic_board_update.restart()
+            except Exception as restart_err:
+                logger.error(f"Failed to restart periodic_board_update: {restart_err}")
+
 bot = ShiftBot()
+_current_bot = bot
 
 
 # --- Slash Commands ---
@@ -637,7 +690,7 @@ async def setup_panel(interaction: discord.Interaction):
         description="❌ ขณะนี้ไม่มีแพทย์ปฏิบัติงานในเวร\n\n*(แพทย์สามารถเข้าเวรได้โดยกดปุ่ม \"เข้าเวร\")*",
         color=discord.Color.light_grey()
     )
-    active_embed.set_footer(text="อัปเดตทุก5นาที")
+    active_embed.set_footer(text="อัปเดตอัตโนมัติทุกๆ 5 นาที")
     status_message = await interaction.channel.send(embed=active_embed)
 
     database.set_setting("active_status_channel_id", str(interaction.channel_id), config.GOOGLE_SHEET_ID, config.CREDENTIALS_JSON_PATH)

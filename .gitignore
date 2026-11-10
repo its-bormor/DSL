@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+credentials.json
+shifts.db
+.system_generated/
